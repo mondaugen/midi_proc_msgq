@@ -1,0 +1,13 @@
+#!/bin/bash
+# Starts jack server
+# Changes pulseaudio to use jack as default sink rather than alsa, so that other
+# apps can play audio
+# assumes pulseaudio-module-jack package already installed
+
+jackd -dalsa&
+jack_wait --wait
+pacmd load-module module-jack-sink
+pacmd load-module module-jack-source
+pacmd set-default-sink jack_out
+jack_connect system:playback_1 'PulseAudio JACK Sink:front-left';
+jack_connect system:playback_2 'PulseAudio JACK Sink:front-right'
