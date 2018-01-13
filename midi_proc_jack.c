@@ -33,6 +33,8 @@
 #define MAX(a,b) ( (a) < (b) ? (b) : (a) )
 #endif
 
+#define MSGQ_MIDIMSG_TYPE 1
+
 static jack_port_t* port;
 static jack_port_t* output_port;
 static jack_ringbuffer_t *rb = NULL;
@@ -140,7 +142,7 @@ process (jack_nframes_t frames, void* arg)
 	jack_nframes_t i;
 
 	buffer = jack_port_get_buffer (port, frames);
-    midioutbuf = jack_port_get_buffer(output_port, nframes);
+    midioutbuf = jack_port_get_buffer(output_port, frames);
 	jack_midi_clear_buffer(midioutbuf);
 	assert (buffer);
 
@@ -187,7 +189,7 @@ process (jack_nframes_t frames, void* arg)
                         soonestmsg->size);
             if (midimsgbuf) {
                 memcpy(midimsgbuf,soonestmsg->buffer,soonestmsg->size);
-                Heap_pop(outevheap,&soonestmsg);
+                Heap_pop(outevheap,(void**)&soonestmsg);
                 midimsg_cache_free(soonestmsg);
             }
         }
@@ -216,7 +218,6 @@ output_thread(void *aux)
         const int mqlen = jack_ringbuffer_read_space (thread_data->rb) / sizeof(midimsg);
         int i;
         for (i=0; i < mqlen; ++i) {
-            size_t j;
             midimsg m;
             jack_ringbuffer_read(thread_data->rb, (char*) &m, sizeof(midimsg));
 
@@ -245,7 +246,7 @@ input_thread(void *aux)
     msgq_midimsg just_recvd;
     while (*thread_data->keeprunning) {
         /* msgrcv waits for messages on Message Queue */
-        if (msgrcv(inthread_data->msgqid_in, &just_recvd,
+        if (msgrcv(thread_data->msgqid_in, &just_recvd,
                     sizeof(msgq_midimsg), MSGQ_MIDIMSG_TYPE, 0)) {
             perror("msgrcv");
             *thread_data->keeprunning = 0;
@@ -272,7 +273,7 @@ input_thread(void *aux)
 
 /* Comparison function for sorting the midi message heap */
 static int
-mmsg_cmp(void *a, void *b)
+mmsg_cmp(void *_a, void *_b)
 {
     midimsg *a = _a;
     midimsg *b = _b;
@@ -355,17 +356,17 @@ main (int argc, char* argv[])
     }
 
     outthread_data ot_data = {
-        .msg_thread_lock = &msg_thread_lock;
-        .keeprunning = &keeprunning;
-        .rb = rb;
-        .data_ready = &data_ready;
+        .msg_thread_lock = &msg_thread_lock,
+        .keeprunning = &keeprunning,
+        .rb = rb,
+        .data_ready = &data_ready,
     };
 
     inthread_data it_data = {
-        .keeprunning = &keeprunning;
-        .msgqid_in = msgqid_in;
-        .heap_lock = &heap_lock;
-        .outevheap = outevheap;
+        .keeprunning = &keeprunning,
+        .msgqid_in = msgqid_in,
+        .heap_lock = &heap_lock,
+        .outevheap = outevheap,
     };
 
 	r = jack_activate (client);

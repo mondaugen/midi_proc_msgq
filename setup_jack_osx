@@ -1,0 +1,2 @@
+jackd -dcoreaudio&
+jack_wait --wait
