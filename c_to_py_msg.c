@@ -5,12 +5,15 @@
 #include <sys/msg.h>
 #include <signal.h>
 
+#define BUFLEN 17
+
 typedef struct {
-    char buf[16];
+    long mtype;
+    char buf[BUFLEN];
     uint32_t size;
     uint32_t tme_rel;
     uint64_t tme_mon;
-} msgdat_t;
+} __attribute__((packed)) msgdat_t;
 
 key_t key = 789;
 int done = 0;
@@ -23,14 +26,16 @@ setdone(int sn)
 
 int main (void)
 {
-    int msgqi = msgget(key, IPC_CREAT);
+    int msgqi = msgget(key, 0666 | IPC_CREAT);
     msgdat_t dat;
     signal(SIGINT,setdone);
+    printf("size: %zu\n",sizeof(msgdat_t)-sizeof(long));
     while (!done) {
-        if(msgrcv(msgqi,&dat,sizeof(msgdat_t),1,0)) {
+        //msgrcv(msgqi,&dat,sizeof(msgdat_t),1,0);
+        if(msgrcv(msgqi,&dat,sizeof(msgdat_t),1,0) < 0) {
             perror("msgrcv");
         }
-        printf("msg: %s, size: %u, rel: %u, mon: %llu",
+        printf("msg: %s, size: %u, rel: %u, mon: %llu\n",
                 dat.buf,
                 dat.size,
                 dat.tme_rel,

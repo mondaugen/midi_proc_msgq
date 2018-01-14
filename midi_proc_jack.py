@@ -99,10 +99,6 @@ def proc_midi(msg):
         _,dat1,dat2=midi3_struct.unpack(buf[:size])
         dat1,dat2=midi_cbs[chan][kind](dat1,dat2)
 
-
-
-
-
 key_in=123
 q_in = ipc.MessageQueue(key,ipc.IPC_CREAT)
 key_out=124
