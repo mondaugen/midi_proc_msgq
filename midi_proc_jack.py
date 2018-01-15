@@ -5,8 +5,10 @@ import array
 import signal
 import sys
 
+BUFLEN=16
+
 head_struct=struct.Struct("l")
-tail_struct=struct.Struct("IIQ")
+tail_struct=struct.Struct("IQ")
 midi2_struct=struct.Struct("cc")
 midi3_struct=struct.Struct("ccc")
 
@@ -35,6 +37,47 @@ midi_event_table = {
         0xd0: 'ChanPress',
         0xe0: 'PitchBend'
 }
+
+def get_midi_event_name(code):
+    try:
+        return midi_event_table[code]
+    except KeyError:
+        raise KeyError('MIDI code %x not supported' % (code,))
+
+midi_code_table = {
+        'NoteOff': 0x80,
+        'NoteOn': 0x90,
+        'PolyKeyPress': 0xa0,
+        'ControlChange': 0xb0,
+        'ProgramChange': 0xc0,
+        'ChanPress': 0xd0,
+        'PitchBend': 0xe0
+}
+
+def get_midi_event_code(name):
+    try:
+        return midi_code_table[name]
+    except KeyError:
+        raise KeyError('MIDI name %s not supported' % (name,))
+
+# Size includes status byte
+midi_event_size_table = {
+        'NoteOff': 3,
+        'NoteOn': 3,
+        'PolyKeyPress': 3
+        'ControlChange': 3
+        'ProgramChange': 2
+        'ChanPress': 2
+        'PitchBend': 3
+        # Others not yet supported
+}
+
+def get_midi_event_size(name):
+    try:
+        return midi_event_size_table[name]
+    except KeyError:
+        raise KeyError('MIDI event %s not supported' % (name,))
+
 
 # Callback table for specific events on specific channels
 midi_cbs_chan = {
@@ -74,7 +117,7 @@ def msg_from_midi_dat(tme_rel,tme_mon,kind,chan,dat1,dat2=None):
     else:
         msg=midi3_struct.pack(midi_stat,dat1,dat2)
     size=len(msg)
-    msg+=bytes(128-size)
+    msg+=bytes(BUFLEN-size)
     tail=tail_struct.pack(size,tme_rel,tme_mon)
     msg+=tail
     # TODO: May need padding in order to work with C...
@@ -84,8 +127,8 @@ def msg_from_midi_dat(tme_rel,tme_mon,kind,chan,dat1,dat2=None):
 def proc_midi(msg):
     #... use structure depending on length, parsing different message components
     # each event can have callback, processing event
-    buf=msg[:128]
-    msg=msg[128:]
+    buf=msg[:BUFLEN]
+    msg=msg[BUFLEN:]
     size,tme_rel,tme_mon=tail_struct.unpack(msg[:16])
     print(out_fmt % (buf[:size],size,tme_rel,tme_mon))
     if (size <= 1):
@@ -99,22 +142,120 @@ def proc_midi(msg):
         _,dat1,dat2=midi3_struct.unpack(buf[:size])
         dat1,dat2=midi_cbs[chan][kind](dat1,dat2)
 
-key_in=123
-q_in = ipc.MessageQueue(key,ipc.IPC_CREAT)
-key_out=124
-q_out = ipc.MessageQueue(key,ipc.IPC_CREAT)
-while not done:
-    while q.current_messages > 0:
-        msg=q.receive()[0]
-        #mtype=head_struct.unpack(msg)
-        #msg=msg[4:]
-        buf=msg[:128]
-        msg=msg[128:]
-        print("msg len: %d",len(msg))
-        size,tme_rel,tme_mon=tail_struct.unpack(msg[:16])
-        print(out_fmt % (buf[:size],size,tme_rel,tme_mon))
-        print_midi_from_bytes(buf[:size])
+class MIDIEvent:
+    def __init__(self,tme_mon,typ,chan,dat):
+        """
+        tme_mon: absolute time in samples
+        typ: typ of MIDI message
+        chan: MIDI channel
+        dat: bytearray of values, if too short for typ, pads with 0s, if too
+             short, array truncated. Status byte written properly with code and
+             channel.
+        """
+        self.size=get_midi_event_size(typ)
+        self.tme_mon=tme_mon
+        self.typ=typ
+        self.chan=chan
+        self.dat = bytearray(self.size)
+        if len(dat) < self.size:
+            self.dat[:len(dat)]=dat
+        elif len(dat) > self.size:
+            self.dat[::1] = dat[:self.size]
+        else:
+            self.dat[::1] = dat
+        self.dat[0] = get_midi_event_code(typ) | chan
+    def to_bytes(self):
+        ret=bytearray(BUFLEN+tail_struct.size)
+        ret[:self.size]=self.dat
+        ret[-tail_struct.size:]=tail_struct.pack(self.size,self.tme_mon)
+        return ret
+    def assert_pitched_type(self):
+        if (self.typ not in ['NoteOn','NoteOff','PolyKeyPress']):
+            raise TypeError("Doesn't represent pitched type")
+    def assert_velocity_type(self):
+        if (self.typ not in ['NoteOn','NoteOff','PolyKeyPress','ChanPress']):
+            raise TypeError("Doesn't represent velocity type")
+    def assert_program_change_type(self):
+        if self.typ != 'ProgramChange':
+            raise TypeError("Doesn't represent program change type")
+    def assert_control_change_type(self):
+        if self.typ != 'ControlChange':
+            raise TypeError("Doesn't represent control change type")
+    def assert_pitch_bend_type
+        if self.typ != 'PitchBend':
+            raise TypeError("Doesn't represent pitch bend type")
+    def get_pitch(self):
+        self.assert_pitched_type()
+        return self.dat[1]
+    def set_pitch(self,p)
+        self.assert_pitched_type()
+        self.dat[1]=p&0x7f
+    def get_velocity(self):
+        self.assert_velocity_type()
+        if (self.typ in ['NoteOn','NoteOff','PolyKeyPress']):
+            return self.dat[2]
+        else:
+            return self.dat[1]
+    def set_velocity(self,v)
+        self.assert_velocity_type()
+        if (self.typ in ['NoteOn','NoteOff','PolyKeyPress']):
+            self.dat[2]=v&0x7f
+        else:
+            self.dat[1]=v&0x7f
+    def get_program(self):
+        self.assert_program_change_type()
+        return self.dat[1]
+    def set_program(self,p):
+        self.assert_program_change_type()
+        self.dat[1]=p&0x7f
+    def get_cc_num(self)
+        self.assert_control_change_type()
+        return self.dat[1]
+    def set_cc_num(self,n)
+        self.assert_control_change_type()
+        self.dat[1]=n&0x7f
+    def get_cc_val(self)
+        self.assert_control_change_type()
+        return self.dat[2]
+    def set_cc_val(self,v)
+        self.assert_control_change_type()
+        self.dat[2]=v&0x7f
+    def get_pitch_bend(self):
+        self.assert_pitch_bend_type()
+        return (self.dat[2] << 7) + self.dat[1]
+    def set_pitch_bend(self,b):
+        self.assert_pitch_bend_type()
+        self.dat[1] = b&0x7f
+        self.dat[2] = (b>>7)&0x7f
 
-    time.sleep(0.1)
+    def from_bytes(b):
+        """
+        b: bytes representing c struct packing the data
+        """
+        buf=b[:BUFLEN]
+        b=b[BUFLEN:]
+        size,tme_mon=tail_struct.unpack(b[:tail_struct.size])
+        if (size < 1):
+            raise ValueError('bytes must contain valid MIDI message')
+        return MIDIEvent(tme_mon,
+            get_midi_event_name(buf[0]|0xf0),buf[0]|0x0f,buf)
 
-sys.exit(0)
+class MIDIProcThread(Thread):
+    def start(self):
+        self.key_in=123
+        self.q_in = ipc.MessageQueue(key,ipc.IPC_CREAT)
+        self.key_out=124
+        self.q_out = ipc.MessageQueue(key,ipc.IPC_CREAT)
+def run(self):
+    while running:
+        while q.current_messages > 0:
+            msg=q_in.receive()[0]
+            buf=msg[:BUFLEN]
+            msg=msg[BUFLEN:]
+            size,tme_rel,tme_mon=tail_struct.unpack(msg[:16])
+            print(out_fmt % (buf[:size],size,tme_rel,tme_mon))
+            print_midi_from_bytes(buf[:size])
+
+        time.sleep(0.1)
+
+    sys.exit(0)

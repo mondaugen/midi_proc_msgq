@@ -55,8 +55,6 @@ typedef struct {
 	uint8_t  buffer[16];
     /* number of data in message */
 	uint32_t size;
-    /* time offset from beginning of process */
-	uint32_t tme_rel;
     /* time since application started, also used by scheduler to determine when events should be output i.e., the heap sorts by this value so that the event that should happen soonest is always at the top. */
 	uint64_t tme_mon;
 } midimsg;
@@ -159,7 +157,6 @@ process (jack_nframes_t frames, void* arg)
 		if (r == 0 && jack_ringbuffer_write_space (rb) >= sizeof(midimsg)) {
 			midimsg m;
 			m.tme_mon = monotonic_cnt;
-			m.tme_rel = event.time;
 			m.size    = event.size;
 			memcpy (m.buffer, event.buffer, MAX(sizeof(m.buffer), event.size));
 			jack_ringbuffer_write (rb, (void *) &m, sizeof(midimsg));
