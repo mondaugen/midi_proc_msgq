@@ -179,16 +179,19 @@ class MIDIEvent:
         else:
             self.dat[::1] = dat
         self.dat[0] = get_midi_event_code(typ) | chan
+    def copy(self):
+        return MIDIEvent(self.tme_mon,self.typ,self.chan,self.dat)
     def print(self):
-        print("time: %d type: %s chan: %d\n"%(self.tme_mon,self.typ,self.chan))
-        print('\tdata: ')
+        print("time: %d type: %s chan: %d"%(self.tme_mon,self.typ,self.chan))
+        print('\tdata: ',end='')
         for i in range(self.size):
-            print("%x " % (self.dat[i],))
-        print("\n")
+            if (i == 0): print("%#x " % (self.dat[i],),end='')
+            else: print("%d " % (self.dat[i],),end='')
+        print()
     def to_bytes(self):
         ret=bytearray(BUFLEN+tail_struct.size)
         ret[:self.size]=self.dat
-        ret[-tail_struct.size:]=tail_struct.pack(self.size,self.tme_mon)
+        ret[-tail_struct.size:]=tail_struct.pack(self.size,int(self.tme_mon))
         return ret
     def assert_pitched_type(self):
         if (self.typ not in ['NoteOn','NoteOff','PolyKeyPress']):
@@ -209,6 +212,7 @@ class MIDIEvent:
         self.assert_pitched_type()
         return self.dat[1]
     def set_pitch(self,p):
+        p=int(p)
         self.assert_pitched_type()
         self.dat[1]=p&0x7f
     def get_velocity(self):
@@ -218,6 +222,7 @@ class MIDIEvent:
         else:
             return self.dat[1]
     def set_velocity(self,v):
+        v=int(v)
         self.assert_velocity_type()
         if (self.typ in ['NoteOn','NoteOff','PolyKeyPress']):
             self.dat[2]=v&0x7f
@@ -227,24 +232,28 @@ class MIDIEvent:
         self.assert_program_change_type()
         return self.dat[1]
     def set_program(self,p):
+        p=int(p)
         self.assert_program_change_type()
         self.dat[1]=p&0x7f
     def get_cc_num(self):
         self.assert_control_change_type()
         return self.dat[1]
     def set_cc_num(self,n):
+        n=int(n)
         self.assert_control_change_type()
         self.dat[1]=n&0x7f
     def get_cc_val(self):
         self.assert_control_change_type()
         return self.dat[2]
     def set_cc_val(self,v):
+        v=int(v)
         self.assert_control_change_type()
         self.dat[2]=v&0x7f
     def get_pitch_bend(self):
         self.assert_pitch_bend_type()
         return (self.dat[2] << 7) + self.dat[1]
     def set_pitch_bend(self,b):
+        b=int(b)
         self.assert_pitch_bend_type()
         self.dat[1] = b&0x7f
         self.dat[2] = (b>>7)&0x7f
@@ -285,7 +294,9 @@ class MIDIProcThread(threading.Thread):
                 mev=MIDIEvent.from_bytes(msg)
                 mev.print()
                 mevs=_midi_cbs_proc(mev)
+                print("mevs length: %d" % (len(mevs),))
                 for m in mevs:
+                    m.print()
                     self.q_out.send(m.to_bytes(),type=MSGTYPE)
             time.sleep(0.001)
         return

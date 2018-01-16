@@ -151,3 +151,9 @@ HeapErr Heap_top(Heap *H, void **key)
     }
     return HEAP_ESIZE;
 }
+
+size_t
+Heap_size(Heap *H)
+{
+    return H->size;
+}

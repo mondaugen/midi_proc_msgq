@@ -43,5 +43,6 @@ HeapErr Heap_push(Heap *H, void *key);
 HeapErr Heap_top(Heap *H, void **key);
 void Heap_clear(Heap *h);
 static inline void Heap_free(Heap *h) { free(h); }
+size_t Heap_size(Heap *H);
 
 #endif /* HEAP_H */

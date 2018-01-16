@@ -4,7 +4,7 @@
 # apps can play audio
 # assumes pulseaudio-module-jack package already installed
 
-jackd -dalsa&
+jackd -dalsa -X raw&
 jack_wait --wait
 pacmd load-module module-jack-sink
 pacmd load-module module-jack-source

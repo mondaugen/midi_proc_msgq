@@ -38,6 +38,8 @@
 #define MIDI_HW_IF_PITCH_MAX 128
 #define MIDIMSGBUFSIZE 16
 
+static int debug = 0;
+
 static jack_port_t* port;
 static jack_port_t* output_port;
 static jack_ringbuffer_t *rb = NULL;
@@ -105,7 +107,9 @@ midimsg_cache_alloc(void)
     if (out_midimsg_cache.cache_mask == 0) {
         return NULL;
     }
-    unsigned int cache_idx = __builtin_clz(out_midimsg_cache.cache_mask);
+    unsigned int cache_idx = 0;
+    while (((1 << cache_idx) & out_midimsg_cache.cache_mask) == 0) { cache_idx++; }
+    //= __builtin_clz(out_midimsg_cache.cache_mask); // This doesn't work, why?
     out_midimsg_cache.cache_mask &= ~(1 << cache_idx);
     return (midimsg*)(out_midimsg_cache.cache_begin +
         (cache_idx << out_midimsg_cache.cache_item_size));
@@ -217,6 +221,7 @@ process (jack_nframes_t frames, void* arg)
 	N = jack_midi_get_event_count (buffer);
 
     if (passthrough) {
+        if (debug) { fprintf(stderr,"passing through\n"); }
         for (i = 0; i < N; ++i) {
             jack_midi_event_t event;
             int r;
@@ -229,7 +234,7 @@ process (jack_nframes_t frames, void* arg)
             if (r == 0 && midimsgbuf) {
                 memcpy(midimsgbuf,event.buffer,event.size);
             } else {
-                fprintf(stderr,"midi_proc_jack: MIDI msg dropped\n");
+                if (debug) { fprintf(stderr,"midi_proc_jack: MIDI msg dropped\n"); }
             }
         }
         return 0;
@@ -261,24 +266,42 @@ process (jack_nframes_t frames, void* arg)
 	}
 
     if (pthread_mutex_trylock (&heap_lock) == 0) {
-        midimsg *soonestmsg;
+        midimsg *soonestmsg = NULL;
+        if (debug) { fprintf(stderr,"Heap size: %zu\n",Heap_size(outevheap)); }
+        if (debug) { fprintf(stderr,"current time, frame start: %lu frame end: %lu\n",monotonic_cnt_beg_frame,monotonic_cnt); }
         while ((Heap_top(outevheap,(void**)&soonestmsg) == HEAP_ENONE)
                 && (soonestmsg != NULL) 
-                && (soonestmsg->tme_mon <= monotonic_cnt)) {
+                && (soonestmsg->tme_mon < monotonic_cnt)) {
+            if (debug) { fprintf(stderr,"message address: %p\n",(void*)soonestmsg); }
             unsigned char *midimsgbuf = NULL;
+            jack_nframes_t currel;
             /* message can maybe get sent, it is time, first filter repeated note ons and note offs. */
-            if (midi_ev_filter_should_play(&midi_ev_filt,soonestmsg->buffer)) {
-                jack_nframes_t currel = 
-                    soonestmsg->tme_mon - monotonic_cnt_beg_frame;
+            int shouldplay = 0;
+            if ((shouldplay = midi_ev_filter_should_play(&midi_ev_filt,soonestmsg->buffer))) {
+                currel = soonestmsg->tme_mon >= monotonic_cnt_beg_frame ?
+                    soonestmsg->tme_mon - monotonic_cnt_beg_frame : 0;
                 midimsgbuf = 
                     jack_midi_event_reserve(midioutbuf, currel, 
                             soonestmsg->size);
             }
             if (midimsgbuf) {
+                if (debug) { fprintf(stderr,"play MIDI msg, time: %lu status: %#x ",soonestmsg->tme_mon,soonestmsg->buffer[0]);
+                    int i;
+                    for (i = 1; i < soonestmsg->size; i++) { fprintf(stderr,"%d ",soonestmsg->buffer[i]); }
+                    fprintf(stderr,"\n");
+                }
                 memcpy(midimsgbuf,soonestmsg->buffer,soonestmsg->size);
+            } else {
+                if (shouldplay) {
+                    if (debug) { fprintf(stderr,"Returned NULL when requesting MIDI event of size %u at time %u, MIDI msg not sent\n",
+                            soonestmsg->size,currel); }
+                }
             }
             Heap_pop(outevheap,(void**)&soonestmsg);
             midimsg_cache_free(soonestmsg);
+        }
+        if (soonestmsg) {
+            if (debug) { fprintf(stderr,"Soonest message at time %lu\n",soonestmsg->tme_mon); }
         }
         pthread_mutex_unlock(&heap_lock);
     }
@@ -301,7 +324,7 @@ output_thread(void *aux)
     outthread_data *thread_data = aux;
     pthread_mutex_lock (thread_data->msg_thread_lock);
 
-    fprintf(stderr,"output thread running\n");
+    if (debug) { fprintf(stderr,"output thread running\n"); }
     while (*thread_data->keeprunning) {
         const int mqlen = jack_ringbuffer_read_space (thread_data->rb) / sizeof(midimsg);
         int i;
@@ -316,7 +339,7 @@ output_thread(void *aux)
         pthread_cond_wait (thread_data->data_ready, thread_data->msg_thread_lock);
     }
     pthread_mutex_unlock (thread_data->msg_thread_lock);
-    fprintf(stderr,"output thread stopping\n");
+    if (debug) { fprintf(stderr,"output thread stopping\n"); }
     return thread_data;
 }
 
@@ -334,7 +357,7 @@ input_thread(void *aux)
 {
     inthread_data *thread_data = aux;
     msgq_midimsg just_recvd;
-    fprintf(stderr,"input thread running\n");
+    if (debug) { fprintf(stderr,"input thread running\n"); }
     while (*thread_data->keeprunning) {
         /* msgrcv waits for messages on Message Queue */
         if (msgrcv(thread_data->msgqid_in, &just_recvd,
@@ -358,9 +381,10 @@ input_thread(void *aux)
             fprintf(stderr,"heap push failed, incoming msg dropped, heap full?\n");
             midimsg_cache_free(mmsg_topush);
         }
+        if (debug) { fprintf(stderr,"Pushed message to heap.\n"); }
         pthread_mutex_unlock(thread_data->heap_lock);
     }
-    fprintf(stderr,"input thread stopping\n");
+    if (debug) { fprintf(stderr,"input thread stopping\n"); }
     return thread_data;
 }
 
@@ -390,6 +414,11 @@ stopsig(int sn)
 int
 main (int argc, char* argv[])
 {
+#ifdef DEBUG
+    debug = 1;
+#else
+    debug = 0;
+#endif
 	jack_client_t* client;
 	char const default_name[] = "midi_proc_jack";
 	char const * client_name;
