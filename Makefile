@@ -1,4 +1,4 @@
-CFLAGS=-Wall
+CFLAGS=-Wall -g
 LDLIBS=-ljack -pthread
 
 midi_proc_jack : heap.o midi_proc_jack.o

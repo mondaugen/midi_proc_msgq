@@ -4,13 +4,13 @@ import struct
 import array
 import signal
 import sys
+import threading
 
 BUFLEN=16
+MSGTYPE=1
 
 head_struct=struct.Struct("l")
 tail_struct=struct.Struct("IQ")
-midi2_struct=struct.Struct("cc")
-midi3_struct=struct.Struct("ccc")
 
 out_fmt="""
 buf: %s
@@ -64,10 +64,10 @@ def get_midi_event_code(name):
 midi_event_size_table = {
         'NoteOff': 3,
         'NoteOn': 3,
-        'PolyKeyPress': 3
-        'ControlChange': 3
-        'ProgramChange': 2
-        'ChanPress': 2
+        'PolyKeyPress': 3,
+        'ControlChange': 3,
+        'ProgramChange': 2,
+        'ChanPress': 2,
         'PitchBend': 3
         # Others not yet supported
 }
@@ -80,19 +80,34 @@ def get_midi_event_size(name):
 
 
 # Callback table for specific events on specific channels
+def _midi_cb_default(mev):
+    return [mev]
+
 midi_cbs_chan = {
-        0x80: None,
-        0x90: None,
-        0xa0: None,
-        0xb0: None,
-        0xc0: None,
-        0xd0: None,
-        0xe0: None
+        'NoteOff': _midi_cb_default,
+        'NoteOn': _midi_cb_default,
+        'PolyKeyPress': _midi_cb_default,
+        'ControlChange': _midi_cb_default,
+        'ProgramChange': _midi_cb_default,
+        'ChanPress': _midi_cb_default,
+        'PitchBend': _midi_cb_default
+        # Others not yet supported
 }
 midi_cbs=[]
-for i in xrange(16):
+for i in range(16):
     midi_cbs.append(midi_cbs_chan.copy())
-
+def set_midi_cb(chan,name,cb):
+    """
+    chan: channel on which to set the callback
+    name: event for which to set the callback
+    cb: the callback
+        should accept a MIDIEvent and return a list of MIDIEvents based on the
+        MIDIEvent. This list can be empty, in that case the MIDI event is
+        swallowed by the application.
+    """
+    midi_cbs[chan][name]=cb
+def reset_midi_cb(chan,name):
+    midi_cbs[chan][name]=_midi_cb_default
 
 def print_midi_from_bytes(b):
     sz=len(b)
@@ -102,7 +117,7 @@ def print_midi_from_bytes(b):
 #        try:
 #            kind=midi_event_table[int(b[0])&0xf0]
 #        except IndexError:
-     kind='Unknown'
+#            kind='Unknown'
         dat1=int(b[1])
         print("Chan: %d, Kind: %s, Dat1: %u" % (chan,kind,dat1))
     if sz >= 3:
@@ -164,6 +179,12 @@ class MIDIEvent:
         else:
             self.dat[::1] = dat
         self.dat[0] = get_midi_event_code(typ) | chan
+    def print(self):
+        print("time: %d type: %s chan: %d\n"%(self.tme_mon,self.typ,self.chan))
+        print('\tdata: ')
+        for i in range(self.size):
+            print("%x " % (self.dat[i],))
+        print("\n")
     def to_bytes(self):
         ret=bytearray(BUFLEN+tail_struct.size)
         ret[:self.size]=self.dat
@@ -181,13 +202,13 @@ class MIDIEvent:
     def assert_control_change_type(self):
         if self.typ != 'ControlChange':
             raise TypeError("Doesn't represent control change type")
-    def assert_pitch_bend_type
+    def assert_pitch_bend_type(self):
         if self.typ != 'PitchBend':
             raise TypeError("Doesn't represent pitch bend type")
     def get_pitch(self):
         self.assert_pitched_type()
         return self.dat[1]
-    def set_pitch(self,p)
+    def set_pitch(self,p):
         self.assert_pitched_type()
         self.dat[1]=p&0x7f
     def get_velocity(self):
@@ -196,7 +217,7 @@ class MIDIEvent:
             return self.dat[2]
         else:
             return self.dat[1]
-    def set_velocity(self,v)
+    def set_velocity(self,v):
         self.assert_velocity_type()
         if (self.typ in ['NoteOn','NoteOff','PolyKeyPress']):
             self.dat[2]=v&0x7f
@@ -208,16 +229,16 @@ class MIDIEvent:
     def set_program(self,p):
         self.assert_program_change_type()
         self.dat[1]=p&0x7f
-    def get_cc_num(self)
+    def get_cc_num(self):
         self.assert_control_change_type()
         return self.dat[1]
-    def set_cc_num(self,n)
+    def set_cc_num(self,n):
         self.assert_control_change_type()
         self.dat[1]=n&0x7f
-    def get_cc_val(self)
+    def get_cc_val(self):
         self.assert_control_change_type()
         return self.dat[2]
-    def set_cc_val(self,v)
+    def set_cc_val(self,v):
         self.assert_control_change_type()
         self.dat[2]=v&0x7f
     def get_pitch_bend(self):
@@ -238,24 +259,33 @@ class MIDIEvent:
         if (size < 1):
             raise ValueError('bytes must contain valid MIDI message')
         return MIDIEvent(tme_mon,
-            get_midi_event_name(buf[0]|0xf0),buf[0]|0x0f,buf)
+            get_midi_event_name(buf[0]&0xf0),buf[0]&0x0f,buf)
 
-class MIDIProcThread(Thread):
-    def start(self):
-        self.key_in=123
-        self.q_in = ipc.MessageQueue(key,ipc.IPC_CREAT)
-        self.key_out=124
-        self.q_out = ipc.MessageQueue(key,ipc.IPC_CREAT)
-def run(self):
-    while running:
-        while q.current_messages > 0:
-            msg=q_in.receive()[0]
-            buf=msg[:BUFLEN]
-            msg=msg[BUFLEN:]
-            size,tme_rel,tme_mon=tail_struct.unpack(msg[:16])
-            print(out_fmt % (buf[:size],size,tme_rel,tme_mon))
-            print_midi_from_bytes(buf[:size])
+def _midi_cbs_proc(mev):
+    """
+    Accepts a MIDI event and routes it to the applicable callback.
+    If the callback has not yet been set, returns a list only containing the mev, otherwise
+    the callback should return a list of MIDI events based on the mev.
+    """
+    return midi_cbs[mev.chan][mev.typ](mev)
 
-        time.sleep(0.1)
-
-    sys.exit(0)
+class MIDIProcThread(threading.Thread):
+    def __init__(self,key_in=124,key_out=123): 
+        threading.Thread.__init__(self)
+        self.running=0
+        self.key_in=key_in
+        self.q_in = ipc.MessageQueue(self.key_in,ipc.IPC_CREAT)
+        self.key_out=key_out
+        self.q_out = ipc.MessageQueue(self.key_out,ipc.IPC_CREAT)
+    def run(self):
+        self.running=1
+        while self.running:
+            while self.q_in.current_messages > 0:
+                msg=self.q_in.receive(type=MSGTYPE)[0]
+                mev=MIDIEvent.from_bytes(msg)
+                mev.print()
+                mevs=_midi_cbs_proc(mev)
+                for m in mevs:
+                    self.q_out.send(m.to_bytes(),type=MSGTYPE)
+            time.sleep(0.001)
+        return

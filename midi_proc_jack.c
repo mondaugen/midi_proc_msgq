@@ -34,6 +34,9 @@
 #endif
 
 #define MSGQ_MIDIMSG_TYPE 1
+#define MIDI_HW_IF_CHAN_MAX 16
+#define MIDI_HW_IF_PITCH_MAX 128
+#define MIDIMSGBUFSIZE 16
 
 static jack_port_t* port;
 static jack_port_t* output_port;
@@ -47,12 +50,13 @@ static pthread_mutex_t heap_lock = PTHREAD_MUTEX_INITIALIZER;
 static int keeprunning = 1;
 static uint64_t monotonic_cnt = 0;
 Heap *outevheap;
+static int passthrough = 0;
 
 #define RBSIZE 512
 
 typedef struct {
-/* MIDI message data */
-	uint8_t  buffer[16];
+    /* MIDI message data */
+	char  buffer[MIDIMSGBUFSIZE];
     /* number of data in message */
 	uint32_t size;
     /* time since application started, also used by scheduler to determine when events should be output i.e., the heap sorts by this value so that the event that should happen soonest is always at the top. */
@@ -128,6 +132,70 @@ midimsg_cache_init(void)
     memset(&out_midimsg_cache.cache_mask,0xff,sizeof(unsigned int));
 }
 
+typedef enum {
+    /* Filter out repeated note ons */
+    midi_filter_flag_NOTEONS = 0x1,
+    /* Filter out repeated note offs */
+    midi_filter_flag_NOTEOFFS = (0x1 < 1u),
+} midi_filter_flag_t;
+
+typedef struct {
+    uint32_t          counts[MIDI_HW_IF_CHAN_MAX][MIDI_HW_IF_PITCH_MAX];
+    midi_filter_flag_t flags;
+} midi_ev_filter_t;
+
+void
+midi_ev_filter_init(midi_ev_filter_t *ef, midi_filter_flag_t flags)
+{
+    memset(ef, 0, sizeof(midi_ev_filter_t));
+    ef->flags |= flags;
+}
+
+/* Event type */
+typedef enum {
+    midi_ev_type_NOTEON = 0x90,
+    midi_ev_type_NOTEOFF = 0x80,
+} midi_ev_type_t;
+
+/* Bytes must at least be of length 3 */
+int
+midi_ev_filter_should_play(midi_ev_filter_t *ef,
+                                 char *bytes)
+{
+    int chan = bytes[0]&0x0f, pitch = bytes[1], vel = bytes[2];
+    switch (bytes[0]&0xf0) {
+        case midi_ev_type_NOTEON:
+            if (vel > 0) {
+                if ((chan >= MIDI_HW_IF_CHAN_MAX) ||
+                    (pitch >= MIDI_HW_IF_PITCH_MAX) ||
+                    ef->counts[chan][pitch] == UINT32_MAX) {
+                    return 0;
+                }
+                ef->counts[chan][pitch] += 1;
+                if (ef->flags & midi_filter_flag_NOTEONS) {
+                    return ef->counts[chan][pitch] == 1 ? 1
+                        : 0;
+                }
+                return 1;
+            }
+            /* Otherwise interpreted as note off */
+        case midi_ev_type_NOTEOFF:
+            if ((chan >= MIDI_HW_IF_CHAN_MAX) ||
+                (pitch >= MIDI_HW_IF_PITCH_MAX) ||
+                ef->counts[chan][pitch] == 0) {
+                return 0;
+            }
+            ef->counts[chan][pitch] -= 1;
+            if (ef->flags & midi_filter_flag_NOTEOFFS) {
+                return ef->counts[chan][pitch] == 0 ? 1
+                    : 0;
+            }
+        default: return 1;
+    }
+}
+
+midi_ev_filter_t midi_ev_filt;
+
 int
 process (jack_nframes_t frames, void* arg)
 {
@@ -147,6 +215,25 @@ process (jack_nframes_t frames, void* arg)
     /* We assume events returned sorted by their order in time, which seems
        to be true if you check out the midi_dump.c example. */
 	N = jack_midi_get_event_count (buffer);
+
+    if (passthrough) {
+        for (i = 0; i < N; ++i) {
+            jack_midi_event_t event;
+            int r;
+
+            r = jack_midi_event_get (&event, buffer, i);
+
+            unsigned char *midimsgbuf = 
+                jack_midi_event_reserve(midioutbuf, event.time, 
+                        event.size);
+            if (r == 0 && midimsgbuf) {
+                memcpy(midimsgbuf,event.buffer,event.size);
+            } else {
+                fprintf(stderr,"midi_proc_jack: MIDI msg dropped\n");
+            }
+        }
+        return 0;
+    }
     _frames = frames;
 	for (i = 0; i < N; ++i) {
 		jack_midi_event_t event;
@@ -175,20 +262,23 @@ process (jack_nframes_t frames, void* arg)
 
     if (pthread_mutex_trylock (&heap_lock) == 0) {
         midimsg *soonestmsg;
-        while ((Heap_top(outevheap,&soonestmsg) == HEAP_ENONE)
+        while ((Heap_top(outevheap,(void**)&soonestmsg) == HEAP_ENONE)
                 && (soonestmsg != NULL) 
                 && (soonestmsg->tme_mon <= monotonic_cnt)) {
-            /* message can be sent, it is time */
-            jack_nframes_t currel = 
-                soonestmsg->tme_mon - monotonic_cnt_beg_frame;
-            unsigned char *midimsgbuf = 
-                jack_midi_event_reserve(midioutbuf, currel, 
-                        soonestmsg->size);
+            unsigned char *midimsgbuf = NULL;
+            /* message can maybe get sent, it is time, first filter repeated note ons and note offs. */
+            if (midi_ev_filter_should_play(&midi_ev_filt,soonestmsg->buffer)) {
+                jack_nframes_t currel = 
+                    soonestmsg->tme_mon - monotonic_cnt_beg_frame;
+                midimsgbuf = 
+                    jack_midi_event_reserve(midioutbuf, currel, 
+                            soonestmsg->size);
+            }
             if (midimsgbuf) {
                 memcpy(midimsgbuf,soonestmsg->buffer,soonestmsg->size);
-                Heap_pop(outevheap,(void**)&soonestmsg);
-                midimsg_cache_free(soonestmsg);
             }
+            Heap_pop(outevheap,(void**)&soonestmsg);
+            midimsg_cache_free(soonestmsg);
         }
         pthread_mutex_unlock(&heap_lock);
     }
@@ -211,6 +301,7 @@ output_thread(void *aux)
     outthread_data *thread_data = aux;
     pthread_mutex_lock (thread_data->msg_thread_lock);
 
+    fprintf(stderr,"output thread running\n");
     while (*thread_data->keeprunning) {
         const int mqlen = jack_ringbuffer_read_space (thread_data->rb) / sizeof(midimsg);
         int i;
@@ -219,11 +310,13 @@ output_thread(void *aux)
             jack_ringbuffer_read(thread_data->rb, (char*) &m, sizeof(midimsg));
 
             push_to_output_msgq(&m);
+            //fprintf(stderr,"message sent\n");
         }
         fflush (stdout);
         pthread_cond_wait (thread_data->data_ready, thread_data->msg_thread_lock);
     }
     pthread_mutex_unlock (thread_data->msg_thread_lock);
+    fprintf(stderr,"output thread stopping\n");
     return thread_data;
 }
 
@@ -241,14 +334,16 @@ input_thread(void *aux)
 {
     inthread_data *thread_data = aux;
     msgq_midimsg just_recvd;
+    fprintf(stderr,"input thread running\n");
     while (*thread_data->keeprunning) {
         /* msgrcv waits for messages on Message Queue */
         if (msgrcv(thread_data->msgqid_in, &just_recvd,
-                    sizeof(msgq_midimsg), MSGQ_MIDIMSG_TYPE, 0)) {
+                    sizeof(msgq_midimsg), MSGQ_MIDIMSG_TYPE, 0) < 0) {
             perror("msgrcv");
             *thread_data->keeprunning = 0;
             break;
         }
+        //fprintf(stderr,"message received\n");
         /* once one is obtained, push to heap */
         pthread_mutex_lock(thread_data->heap_lock);
         midimsg *mmsg_topush = midimsg_cache_alloc();
@@ -265,6 +360,7 @@ input_thread(void *aux)
         }
         pthread_mutex_unlock(thread_data->heap_lock);
     }
+    fprintf(stderr,"input thread stopping\n");
     return thread_data;
 }
 
@@ -297,10 +393,16 @@ main (int argc, char* argv[])
 	jack_client_t* client;
 	char const default_name[] = "midi_proc_jack";
 	char const * client_name;
-	int time_format = 0;
 	int r;
 
 	int cn = 1;
+
+	if (argc > 1) {
+		if (!strcmp (argv[1], "-p")) {
+            passthrough = 1;
+            cn = 2; 
+        }
+    }
 
 	if (argc > cn) {
 		client_name = argv[cn];
@@ -365,6 +467,9 @@ main (int argc, char* argv[])
         .heap_lock = &heap_lock,
         .outevheap = outevheap,
     };
+
+    /* I would reckon only filtering note offs is the most common configuration */
+    midi_ev_filter_init(&midi_ev_filt,midi_filter_flag_NOTEOFFS);
 
 	r = jack_activate (client);
 	if (r != 0) {
