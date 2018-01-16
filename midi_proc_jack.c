@@ -18,6 +18,7 @@
 #include <jack/midiport.h>
 #include <jack/ringbuffer.h>
 #include "heap.h"
+#include "fastcache.h"
 
 #ifdef __MINGW32__
 #include <pthread.h>
@@ -37,6 +38,7 @@
 #define MIDI_HW_IF_CHAN_MAX 16
 #define MIDI_HW_IF_PITCH_MAX 128
 #define MIDIMSGBUFSIZE 16
+#define CACHE_NOBJS 32
 
 static int debug = 0;
 
@@ -88,59 +90,13 @@ push_to_output_msgq (midimsg* event)
     }
 }
 
-/* Functions for allocating / deallocating midimsgs for use in realtime context */
-
-typedef struct {
-    /* Mask indicating which items are available. There are up to sizeof(unsigned int)*8 items. */
-    unsigned int cache_mask;
-    /* Address of beginning of cache */
-    char *cache_begin;
-    /* Size of 1 item of cache as power of 2 */
-    size_t cache_item_size;
-} midimsg_cache;
-
-static midimsg_cache out_midimsg_cache;
-
-midimsg *
-midimsg_cache_alloc(void)
-{
-    if (out_midimsg_cache.cache_mask == 0) {
-        return NULL;
-    }
-    unsigned int cache_idx = 0;
-    while (((1 << cache_idx) & out_midimsg_cache.cache_mask) == 0) { cache_idx++; }
-    //= __builtin_clz(out_midimsg_cache.cache_mask); // This doesn't work, why?
-    out_midimsg_cache.cache_mask &= ~(1 << cache_idx);
-    return (midimsg*)(out_midimsg_cache.cache_begin +
-        (cache_idx << out_midimsg_cache.cache_item_size));
-}
-
-void
-midimsg_cache_free(midimsg *msg)
-{
-    unsigned int cache_idx = 
-        ((char*)msg - out_midimsg_cache.cache_begin) >> out_midimsg_cache.cache_item_size;
-    out_midimsg_cache.cache_mask |= 1 << cache_idx;
-}
-
-/* Will have failed if out_midimsg_cache.cache_begin == NULL after calling */
-void
-midimsg_cache_init(void)
-{
-    memset(&out_midimsg_cache,0,sizeof(midimsg_cache));
-    while ((1 << out_midimsg_cache.cache_item_size) < sizeof(midimsg)) {
-        out_midimsg_cache.cache_item_size++;
-    }
-    out_midimsg_cache.cache_begin =
-        malloc((1 << out_midimsg_cache.cache_item_size)*sizeof(unsigned int)*8);
-    memset(&out_midimsg_cache.cache_mask,0xff,sizeof(unsigned int));
-}
+static fastcache_t *out_midimsg_cache;
 
 typedef enum {
     /* Filter out repeated note ons */
     midi_filter_flag_NOTEONS = 0x1,
     /* Filter out repeated note offs */
-    midi_filter_flag_NOTEOFFS = (0x1 < 1u),
+    midi_filter_flag_NOTEOFFS = 0x2,
 } midi_filter_flag_t;
 
 typedef struct {
@@ -175,12 +131,20 @@ midi_ev_filter_should_play(midi_ev_filter_t *ef,
                     ef->counts[chan][pitch] == UINT32_MAX) {
                     return 0;
                 }
+                int ret = 0;
                 ef->counts[chan][pitch] += 1;
+                fprintf(stderr,"noteon, counts: %u\n",ef->counts[chan][pitch]);
                 if (ef->flags & midi_filter_flag_NOTEONS) {
-                    return ef->counts[chan][pitch] == 1 ? 1
+                    fprintf(stderr,"checking noteons\n");
+                    ret = ef->counts[chan][pitch] == 1 ? 1
                         : 0;
+                } else {
+                    ret = 1;
                 }
-                return 1;
+                if (ret) { 
+                    fprintf(stderr,"sending noteon\n");
+                }
+                return ret;
             }
             /* Otherwise interpreted as note off */
         case midi_ev_type_NOTEOFF:
@@ -189,11 +153,20 @@ midi_ev_filter_should_play(midi_ev_filter_t *ef,
                 ef->counts[chan][pitch] == 0) {
                 return 0;
             }
+            int ret = 0;
             ef->counts[chan][pitch] -= 1;
+            fprintf(stderr,"noteoff, counts: %u\n",ef->counts[chan][pitch]);
             if (ef->flags & midi_filter_flag_NOTEOFFS) {
-                return ef->counts[chan][pitch] == 0 ? 1
+                fprintf(stderr,"checking noteoff\n");
+                ret = ef->counts[chan][pitch] == 0 ? 1
                     : 0;
+            } else {
+                ret = 1;
             }
+            if (ret) { 
+                fprintf(stderr,"sending noteoff\n");
+            }
+            return ret;
         default: return 1;
     }
 }
@@ -298,7 +271,7 @@ process (jack_nframes_t frames, void* arg)
                 }
             }
             Heap_pop(outevheap,(void**)&soonestmsg);
-            midimsg_cache_free(soonestmsg);
+            fastcache_free(out_midimsg_cache,soonestmsg);
         }
         if (soonestmsg) {
             if (debug) { fprintf(stderr,"Soonest message at time %lu\n",soonestmsg->tme_mon); }
@@ -369,7 +342,7 @@ input_thread(void *aux)
         //fprintf(stderr,"message received\n");
         /* once one is obtained, push to heap */
         pthread_mutex_lock(thread_data->heap_lock);
-        midimsg *mmsg_topush = midimsg_cache_alloc();
+        midimsg *mmsg_topush = fastcache_alloc(out_midimsg_cache);
         if (!mmsg_topush) {
             fprintf(stderr,"cache full, incoming msg dropped\n");
             pthread_mutex_unlock(thread_data->heap_lock);
@@ -379,7 +352,7 @@ input_thread(void *aux)
         if (Heap_push(thread_data->outevheap,mmsg_topush) 
                 != HEAP_ENONE) {
             fprintf(stderr,"heap push failed, incoming msg dropped, heap full?\n");
-            midimsg_cache_free(mmsg_topush);
+            fastcache_free(out_midimsg_cache,mmsg_topush);
         }
         if (debug) { fprintf(stderr,"Pushed message to heap.\n"); }
         pthread_mutex_unlock(thread_data->heap_lock);
@@ -467,7 +440,7 @@ main (int argc, char* argv[])
         perror("msgget in");
     }
 
-    outevheap = Heap_new(sizeof(unsigned int)*8,
+    outevheap = Heap_new(CACHE_NOBJS,
             mmsg_cmp,
             set_idx_ignore);
 
@@ -476,9 +449,9 @@ main (int argc, char* argv[])
         exit (EXIT_FAILURE);
     }
 
-    midimsg_cache_init();
+    out_midimsg_cache = fastcache_new(sizeof(midimsg),CACHE_NOBJS);
 
-    if (!out_midimsg_cache.cache_begin) {
+    if (!out_midimsg_cache) {
         fprintf(stderr, "Could not allocate midimsg cache\n");
         exit(EXIT_FAILURE);
     }
