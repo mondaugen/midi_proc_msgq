@@ -138,9 +138,9 @@ midimsg_cache_init(void)
 
 typedef enum {
     /* Filter out repeated note ons */
-    midi_filter_flag_NOTEONS = 0x1,
+    midi_filter_flag_NOTEONS = (1 << 0),
     /* Filter out repeated note offs */
-    midi_filter_flag_NOTEOFFS = (0x1 < 1u),
+    midi_filter_flag_NOTEOFFS = (1 << 1),
 } midi_filter_flag_t;
 
 typedef struct {
