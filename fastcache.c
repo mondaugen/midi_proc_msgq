@@ -36,10 +36,12 @@ fastcache_alloc(fastcache_t *fc)
 {
     uint32_t cache_idx = 0;
     uint32_t cache_block = 0;
-    while ((cache_block < fc->cache_nblocks) && ((1 << cache_idx) & fc->cache_mask[cache_block]) == 0) {
+    uint32_t *cbptr = fc->cache_mask;
+    while ((cache_block < fc->cache_nblocks) && ((1 << cache_idx) & *cbptr) == 0) {
         cache_idx = (cache_idx + 1) & 0x1f;
         if (cache_idx == 0) {
             cache_block++;
+            cbptr++;
         }
     }
     /*
@@ -49,7 +51,7 @@ fastcache_alloc(fastcache_t *fc)
     if (cache_block >= fc->cache_nblocks) {
         return NULL;
     }
-    fc->cache_mask[cache_block] &= ~(1 << cache_idx);
+    *cbptr &= ~(1 << cache_idx);
     return (void*)(fc->cache_begin +
         ((cache_idx + (cache_block << 5)) << fc->cache_item_size));
 }
@@ -60,7 +62,7 @@ fastcache_free(fastcache_t *fc, void *ptr)
     uint32_t obj_idx = (((char*)ptr - fc->cache_begin) >> fc->cache_item_size);
     uint32_t cache_idx = obj_idx & 0x1f;
     uint32_t cache_block = obj_idx >> 5; 
-    fc->cache_mask[cache_block] |= cache_idx;
+    fc->cache_mask[cache_block] |= (1 << cache_idx);
 }
 
 /* 
@@ -72,7 +74,7 @@ fastcache_new(size_t obj_size, size_t nobjs)
 {
     if (obj_size == 0 || nobjs == 0) { return NULL; }
     size_t cache_item_size = 1;
-    while ((1 << cache_item_size) < obj_size) { cache_item_size <<= 1; }
+    while ((1 << cache_item_size) < obj_size) { cache_item_size++; }
     nobjs = (nobjs + 31) & ~0x1f;
     fastcache_t *ret = calloc(sizeof(fastcache_t)
             +sizeof(uint32_t)*(nobjs >> 5) /* space for cache mask */
