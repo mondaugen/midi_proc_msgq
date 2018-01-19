@@ -5,7 +5,7 @@ jack_midi_dump&
 dumpid=$!
 python3 run_midi_proc_live_jack.py&
 pyid=$!
-fluidsynth -g 1 -r 48000 -z 1024 -i -s -a jack -m jack /usr/share/sounds/sf2/FluidR3_GM.sf2&
+fluidsynth -z 1024 -g 1 -r 48000 -i -s -a jack -m jack /usr/share/sounds/sf2/FluidR3_GM.sf2&
 fluidid=$!
 sleep 1
 jack_connect $hwinputport midi_proc_jack:input

@@ -38,7 +38,7 @@
 #define MIDI_HW_IF_CHAN_MAX 16
 #define MIDI_HW_IF_PITCH_MAX 128
 #define MIDIMSGBUFSIZE 16
-#define CACHE_NOBJS 32
+#define CACHE_NOBJS 1024
 
 static int debug = 0;
 
@@ -133,16 +133,16 @@ midi_ev_filter_should_play(midi_ev_filter_t *ef,
                 }
                 int ret = 0;
                 ef->counts[chan][pitch] += 1;
-                fprintf(stderr,"noteon, counts: %u\n",ef->counts[chan][pitch]);
+                if (debug) { fprintf(stderr,"noteon, counts: %u\n",ef->counts[chan][pitch]); }
                 if (ef->flags & midi_filter_flag_NOTEONS) {
-                    fprintf(stderr,"checking noteons\n");
+                    if (debug) { fprintf(stderr,"checking noteons\n"); }
                     ret = ef->counts[chan][pitch] == 1 ? 1
                         : 0;
                 } else {
                     ret = 1;
                 }
                 if (ret) { 
-                    fprintf(stderr,"sending noteon\n");
+                    if (debug) { fprintf(stderr,"sending noteon\n"); }
                 }
                 return ret;
             }
@@ -155,16 +155,16 @@ midi_ev_filter_should_play(midi_ev_filter_t *ef,
             }
             int ret = 0;
             ef->counts[chan][pitch] -= 1;
-            fprintf(stderr,"noteoff, counts: %u\n",ef->counts[chan][pitch]);
+            if (debug) { fprintf(stderr,"noteoff, counts: %u\n",ef->counts[chan][pitch]); }
             if (ef->flags & midi_filter_flag_NOTEOFFS) {
-                fprintf(stderr,"checking noteoff\n");
+                if (debug) { fprintf(stderr,"checking noteoff\n"); }
                 ret = ef->counts[chan][pitch] == 0 ? 1
                     : 0;
             } else {
                 ret = 1;
             }
             if (ret) { 
-                fprintf(stderr,"sending noteoff\n");
+                if (debug) { fprintf(stderr,"sending noteoff\n"); }
             }
             return ret;
         default: return 1;
