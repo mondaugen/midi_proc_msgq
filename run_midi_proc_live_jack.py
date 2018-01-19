@@ -27,15 +27,19 @@ def makenote(mev):
     ccn = mev.get_cc_num() 
     ccv = mev.get_cc_val()
     mev.print()
+    pchs=[0,4,7,9]
+    times=[(i*48000) for i in [0,0.25,0.5,3./4+1./8]]
+    m=[]
     if (ccn >= 107 and ccn <= 124):
         pch=pitch_tab[ccn]
-        if (ccv > 0):
-            m=midi_proc_jack.MIDIEvent(mev.tme_mon,'NoteOn',mev.chan,bytes([0,pch,ccv]))
-        else:
-            m=midi_proc_jack.MIDIEvent(mev.tme_mon,'NoteOff',mev.chan,bytes([0,pch,ccv]))
+        for p,t in zip(pchs,times):
+            if (ccv > 0):
+                m.append(midi_proc_jack.MIDIEvent(mev.tme_mon+t,'NoteOn',mev.chan,bytes([0,pch+p,ccv])))
+            else:
+                m.append(midi_proc_jack.MIDIEvent(mev.tme_mon+t,'NoteOff',mev.chan,bytes([0,pch+p,ccv])))
     else:
         return [mev]
-    return [m]
+    return m
 
 midi_proc_jack.set_midi_cb(0,'ControlChange',makenote)
 
