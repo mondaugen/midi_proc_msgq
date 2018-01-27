@@ -33,15 +33,21 @@ cmd_parsers=[
         ),
         (
             'PLUS',
-            '\+',
+            '[+]',
             None,
-            lambda s,a: _plus
+            _plus
         ),
         (
             'NOP',
             ' ',
             None,
             None
+        ),
+        (
+            'PRINT',
+            'p',
+            None,
+            lambda s,a: print(s[-1])
         )
 ]
 
@@ -52,15 +58,27 @@ class Dome:
         self.cmd_parsers=[]
         for n,p,a,f in cmd_parsers:
             self.cmd_parsers.append((n,re.compile(p),a,f))
+        for t in cmd_parsers:
+            print(t)
     def parse(self,stack,cmds):
         """
         Parse the cmnds, effecting them on the stack.
         """
         while cmds:
-            for _,p,_,_ in self.cmd_parsers:
+            for n,p,a,f in self.cmd_parsers:
                 m=p.match(cmds)
                 if m:
+                    print(n)
+                    aux=None
+                    if a:
+                        aux=a(m.group(0))
+                    if f:
+                        f(stack,aux)
+                    cmds=cmds[m.span(0)[1]:]
+                    continue
 
-
-
-
+d=Dome()
+c='123 456.789 + p'
+s=[]
+d.parse(s,c)
+print(s)
