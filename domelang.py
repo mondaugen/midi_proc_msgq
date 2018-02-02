@@ -9,11 +9,27 @@ DOME_MODE_DISPATCH=1
 DOME_MODE_FUNDEF=2
 DOME_MODE_INTERPRET=3
 
+DEBUG=False
 
 def _plus(s,a):
     x=s.pop()
     y=s.pop()
-    s.append(x+y)
+    s.append(y+x)
+
+def _times(s,a):
+    x=s.pop()
+    y=s.pop()
+    s.append(y*x)
+
+def _divide(s,a):
+    x=s.pop()
+    y=s.pop()
+    s.append(y/x)
+
+def _subtract(s,a):
+    x=s.pop()
+    y=s.pop()
+    s.append(y-x)
 
 # Note these are stored in the order that they are matched against. The first
 # one to match is executed.
@@ -35,7 +51,19 @@ cmd_parsers=[
             'PLUS',
             '\+',
             None,
-            lambda s,a: _plus
+            _plus
+        ),
+        (
+            'TIMES',
+            '×',
+            None,
+            _times
+        ),
+        (
+            'DIVIDE',
+            '÷',
+            None,
+            _divide
         ),
         (
             'NOP',
@@ -54,13 +82,29 @@ class Dome:
             self.cmd_parsers.append((n,re.compile(p),a,f))
     def parse(self,stack,cmds):
         """
-        Parse the cmnds, effecting them on the stack.
+        Parse the commands, effecting them on the stack.
         """
         while cmds:
-            for _,p,_,_ in self.cmd_parsers:
+            matched=False
+            for n,p,a,f in self.cmd_parsers:
                 m=p.match(cmds)
                 if m:
+                    aux=None
+                    if a:
+                        aux=a(cmds[m.start(0):m.end(0)])
+                    if (DEBUG):
+                        print('command: %s' % (n,))
+                        print('stack: ',end='')
+                        print(stack)
+                    if f:
+                        f(stack,aux)
+                    else:
+                        if (DEBUG):
+                            print("Warning, no function")
 
-
-
-
+                    cmds=cmds[m.end(0):]
+                    matched=True
+                    break
+            if not matched:
+                print("Error: no match for %s" % (cmds,))
+                break

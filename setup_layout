@@ -1,0 +1,2 @@
+xkbcomp $DISPLAY /tmp/oldlayout.xkb
+xkbcomp layout.xkb $DISPLAY
