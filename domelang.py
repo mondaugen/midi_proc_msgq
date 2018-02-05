@@ -26,10 +26,10 @@ def _vop(x,y,op):
         if type(y) == list:
             ly = len(y)
             for i in range(lx):
-                x[i] = _vop(x[i],y[i%ly])
+                x[i] = _vop(x[i],y[i%ly],op)
         else:
             for i in range(lx):
-                x[i] = _vop(x[i],y)
+                x[i] = _vop(x[i],y,op)
         return x
     else:
         if type(y) == list:
