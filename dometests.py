@@ -15,6 +15,15 @@ def test_result_default(observed , desired):
     else:
         print("failed, observed: %f, desired: %f" % (observed,desired))
 
+def test_result_exact(observed,desired):
+    if observed == desired:
+        print("passed")
+    else:
+        print("failed, observed: ",end="")
+        print(observed,end="")
+        print(", desired: ",end="")
+        print(desired)
+
 parser=domelang.Dome()
 
 domelang.DEBUG=False
@@ -79,7 +88,85 @@ tests = [
             1.2 + 5.6,
             [1.2,[5.6,7,8]],
             test_result_default
-        )
+        ),
+        (
+            ']',
+            [1,3,5,0,2],
+            [[0,1,2,3,4,5,6],[1,3,5,7,9]],
+            test_result_default
+        ),
+        (
+            ']',
+            [0,0,0],
+            [0,[1,3,5]],
+            test_result_default
+        ),
+        (
+            ']',
+            [3],
+            [[1,3,5],[1]],
+            test_result_default
+        ),
+        (
+            ']',
+            3,
+            [[1,3,5],1],
+            test_result_default
+        ),
+        (
+            ']',
+            [[1,3],[5,6,7,4,5]],
+            [[[1,2,3],[4,5,6,7]],[[0,2],[1,2,3,4,5]]],
+            test_result_exact
+        ),
+        (
+            ']',
+            [[1,3],[5,5,5,5,5]],
+            [[[1,2,3],5],[[0,2],[1,2,3,4,5]]],
+            test_result_exact
+        ),
+        (
+            ']',
+            [[1,3],[5,5,5,[5,5]]],
+            [[[1,2,3],5],[[0,2],[1,2,3,[4,5]]]],
+            test_result_exact
+        ),
+        (
+            '1.2(',
+            [1,1.2],
+            [[1]],
+            test_result_exact
+        ),
+        (
+            '1(1.2(',
+            [1,1.2],
+            [[]],
+            test_result_exact
+        ),
+        (
+            '1(1.2(',
+            [1,1.2],
+            [],
+            test_result_exact
+        ),
+        (
+            '1(',
+            [1,1.2],
+            [],
+            test_result_exact
+        ),
+        (
+            ')',
+            3.4,
+            [[1,2,3.4]],
+            test_result_exact
+        ),
+        (
+            ')+',
+            [1+3.4,2+3.4],
+            [[1,2,3.4]],
+            test_result_exact
+        ),
 ]
 
 for c,a,s,t in tests:
