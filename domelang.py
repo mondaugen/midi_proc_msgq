@@ -120,25 +120,25 @@ class _vindex_set_ftable:
     def nLL(l,m,r):
         return l
     def lnn(l,m,r):
-        l[m]=r
+        l[m%len(l)]=r
         return l
     def lnl(l,m,r):
-        l[m]=r
+        l[m%len(l)]=r
         return l
     def lnL(l,m,r):
-        l[m]=r
+        l[m%len(l)]=r
         return l
     def lln(l,m,r):
         for i in m:
-            l[i]=r
+            l[i%len(l)]=r
         return l
     def lll(l,m,r):
         for a,b in zip(m,cycle(r)):
-            l[a]=b
+            l[a%len(l)]=b
         return l
     def llL(l,m,r):
         for a,b in zip(m,cycle(r)):
-            l[a]=b
+            l[a%len(l)]=b
         return l
     def lLn(l,m,r):
         for a in m:
@@ -154,41 +154,41 @@ class _vindex_set_ftable:
         return l
     def Lnn(l,m,r):
         for i,a in enumerate(l):
-            l[i]=_vindex_set(a,m,r)
+            l[i%len(l)]=_vindex_set(a,m,r)
         return l
     def Lnl(l,m,r):
-        l[m]=r
+        l[m%len(l)]=r
         return l
     def LnL(l,m,r):
-        l[m]=r
+        l[m%len(l)]=r
         return l
     def Lln(l,m,r):
         for i,a in enumerate(l):
-            l[i]=_vindex_set(a,m,r)
+            l[i%len(l)]=_vindex_set(a,m,r)
         return l
     def Lll(l,m,r):
         for i,a in enumerate(l):
-            l[i]=_vindex_set(a,m,r)
+            l[i%len(l)]=_vindex_set(a,m,r)
         return l
     def LlL(l,m,r):
         for i,(a,b) in enumerate(zip(l,cycle(r))):
-            l[i]=_vindex_set(a,m,b)
+            l[i%len(l)]=_vindex_set(a,m,b)
         return l
     def LLn(l,m,r):
         for i,(a,b) in enumerate(zip(l,cycle(m))):
-            l[i]=_vindex_set(a,b,r)
+            l[i%len(l)]=_vindex_set(a,b,r)
         return l
     def LLl(l,m,r):
         for i,(a,b) in enumerate(zip(l,cycle(m))):
-            l[i]=_vindex_set(a,b,r)
+            l[i%len(l)]=_vindex_set(a,b,r)
         return l
     def LLL(l,m,r):
         for i,(a,b,c) in enumerate(zip(l,cycle(m),cycle(r))):
-            l[i]=_vindex_set(a,b,c)
+            l[i%len(l)]=_vindex_set(a,b,c)
         return l
 
 def _vindex_set(l,m,r):
-    tc=reduce(lambda x,y: _typecode(x)+_typecode(y),[l,m,r])
+    tc=''.join(map(_typecode,[l,m,r]))
     return getattr(_vindex_set_ftable,tc)(l,m,r)
 
 def _vindex_set_op(s,a,state=None):
@@ -279,13 +279,19 @@ cmd_parsers=[
         (
             'INDEX_GET',
             '\]',
-            lambda x,s: _vindex_get,
+            lambda x,s: None,
             _vindex_get_op
+        ),
+        (
+            'INDEX_SET',
+            '\[',
+            lambda x,s: None,
+            _vindex_set_op
         ),
         (
             'APPEND',
             '\(',
-            lambda x,s: _vappend,
+            lambda x,s: None,
             _vappend_op
         ),
         (
@@ -318,12 +324,20 @@ class Dome:
         for t in cmd_parsers:
             print(t)
         # Eventually we will use this to pass information to operators
+        # This is the state of the parser which affects how symbols are
+        # converted into instructions and data
         self.state=None
         
     def parse(self,stack,cmds):
         """
         Parse the commands, effecting them on the stack.
         """
+        # TODO: Separate parsing and execution
+        # Parsing gives a "program" which is a list of functions to call and
+        # some required auxiliary data.
+        # This program is then executed, and can be executed multiple times.
+        # This allows constructs like if/else and while loops because different
+        # points of the program can be jumped to.
         while cmds:
             matched=False
             for n,p,a,f in self.cmd_parsers:
@@ -331,6 +345,7 @@ class Dome:
                 if m:
                     aux=None
                     if a:
+                        # self.state is parser state
                         aux=a(m.group(0),self.state)
                     if (DEBUG):
                         print('command: %s' % (n,))
