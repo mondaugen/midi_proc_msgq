@@ -1,6 +1,8 @@
 # bunk dank dome
 
 import re
+from functools import reduce
+from itertools import cycle
 
 # Mode when waiting for operation
 # for example, if we are in this mode and we encounter =, we expect a character
@@ -10,6 +12,28 @@ DOME_MODE_FUNDEF=2
 DOME_MODE_INTERPRET=3
 
 DEBUG=False
+
+def _list_depth(l,d):
+    if type(l) == list:
+        return max(map(lambda m: _list_depth(m,d+1),l))
+    else:
+        return d
+
+def _typecode(x):
+    """
+    If x a number, output, n
+    If list of depth 1, output l,
+    If list of depth > 1, output L,
+    Otherwise output ? for unknown.
+    """
+    if type(x) == int or type(x) == float:
+        return 'n'
+    if type(x) == list:
+        if _list_depth(x,0) > 1:
+            return 'L'
+        else:
+            return 'l'
+    return '?'
 
 def _op_plus(x,y):
     return x+y
@@ -44,12 +68,6 @@ def _bin_op(s,a,state=None):
     s.append(_vop(y,x,op))
     # TODO: opt can be set to change how _bin_op works
 
-def _list_depth(l,d):
-    if type(l) == list:
-        return max(map(lambda m: _list_depth(m,d+1),l))
-    else:
-        return d
-
 def _vindex_get(lhs,rhs):
     """
     Vectorized indexing, get method
@@ -83,6 +101,101 @@ def _vindex_get_op(s,a,state=None):
     x=s.pop()
     y=s.pop()
     s.append(_vindex_get(y,x))
+
+class _vindex_set_ftable:
+    def nnn(l,m,r):
+        return r
+    def nnl(l,m,r):
+        return r[0]
+    def nln(l,m,r):
+        return r
+    def nll(l,m,r):
+        return r[-1]
+    def nlL(l,m,r):
+        return l
+    def nLn(l,m,r):
+        return r
+    def nLl(l,m,r):
+        return l
+    def nLL(l,m,r):
+        return l
+    def lnn(l,m,r):
+        l[m]=r
+        return l
+    def lnl(l,m,r):
+        l[m]=r
+        return l
+    def lnL(l,m,r):
+        l[m]=r
+        return l
+    def lln(l,m,r):
+        for i in m:
+            l[i]=r
+        return l
+    def lll(l,m,r):
+        for a,b in zip(m,cycle(r)):
+            l[a]=b
+        return l
+    def llL(l,m,r):
+        for a,b in zip(m,cycle(r)):
+            l[a]=b
+        return l
+    def lLn(l,m,r):
+        for a in m:
+            l=_vindex_set(l,a,r)
+        return l
+    def lLl(l,m,r):
+        for a in m:
+            l=_vindex_set(l,a,r)
+        return l
+    def lLL(l,m,r):
+        for a,b in zip(m,cycle(r)):
+            l=_vindex_set(l,a,b)
+        return l
+    def Lnn(l,m,r):
+        for i,a in enumerate(l):
+            l[i]=_vindex_set(a,m,r)
+        return l
+    def Lnl(l,m,r):
+        l[m]=r
+        return l
+    def LnL(l,m,r):
+        l[m]=r
+        return l
+    def Lln(l,m,r):
+        for i,a in enumerate(l):
+            l[i]=_vindex_set(a,m,r)
+        return l
+    def Lll(l,m,r):
+        for i,a in enumerate(l):
+            l[i]=_vindex_set(a,m,r)
+        return l
+    def LlL(l,m,r):
+        for i,(a,b) in enumerate(zip(l,cycle(r))):
+            l[i]=_vindex_set(a,m,b)
+        return l
+    def LLn(l,m,r):
+        for i,(a,b) in enumerate(zip(l,cycle(m))):
+            l[i]=_vindex_set(a,b,r)
+        return l
+    def LLl(l,m,r):
+        for i,(a,b) in enumerate(zip(l,cycle(m))):
+            l[i]=_vindex_set(a,b,r)
+        return l
+    def LLL(l,m,r):
+        for i,(a,b,c) in enumerate(zip(l,cycle(m),cycle(r))):
+            l[i]=_vindex_set(a,b,c)
+        return l
+
+def _vindex_set(l,m,r):
+    tc=reduce(lambda x,y: _typecode(x)+_typecode(y),[l,m,r])
+    return getattr(_vindex_set_ftable,tc)(l,m,r)
+
+def _vindex_set_op(s,a,state=None):
+    r=s.pop()
+    m=s.pop()
+    l=s.pop()
+    s.append(_vindex_set(l,m,r))
 
 def _vappend(x,y):
     x.append(y)
