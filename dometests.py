@@ -24,7 +24,7 @@ def test_result_exact(observed,desired):
         print(", desired: ",end="")
         print(desired)
 
-parser=domelang.Dome()
+parser=domelang.Parser()
 
 domelang.DEBUG=False
 
@@ -188,6 +188,8 @@ tests = [
 ]
 
 for c,a,s,t in tests:
-    parser.parse(s,c)
+    prog = parser.parse(c)
+    executor = domelang.Executor()
+    executor.run(s,prog)
     t(s[-1],a)
     print(s[-1])

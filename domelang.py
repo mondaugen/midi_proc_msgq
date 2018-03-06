@@ -229,17 +229,52 @@ def _vpop_op(s,a,state=None):
     s.append(x[:-1])
     s.append(x[-1])
 
+def _if_aux(x,state):
+    newif=If(state.prog_counter)
+    state.ifs.append(newif)
+    return newif
+
+def _else_aux(x,state):
+    try:
+        state.ifs[-1].else_pc_pos = state.prog_counter
+    except IndexError:
+        print('No matching "if" statement')
+        return None
+    return None #Else(state.ifs[-1])
+
+def _endif_aux(x,state):
+    try:
+        state.ifs[-1].endif_pc_pos = state.prog_counter
+    except IndexError:
+        print('No matching "if" statement')
+        return None
+    return None #EndIf(state.ifs[-1])
+
+def _if_op(s,a,t):
+    # a is If object, t is program state
+    x=s.pop()
+    if _is_true(x):
+        t.jump(a.truth_pc_pos)
+        return
+    if a.else_pc_pos:
+        t.jump(a.else_pc_pos)
+        return
+    t.jump(a.endif_pc_pos)
+
 # Note these are stored in the order that they are matched against. The first
 # one to match is executed.
 cmd_parsers=[
         # Command name, pattern matcher, auxilary preparation function, function
         # command name can be any string
+        #
         # pattern matcher is a regex that can be interpreted by the re module to
         # give a matching object
+        #
         # auxilary preparation function accepts the string parsed and a state
-        # variable and returns data necessary for "function" to evalutate
-        # function is passed the stack and the auxilary function and returns its
-        # result by operating on the stack
+        # variable representing the state of the parser and returns data necessary for "function" to evalutate
+        #
+        # function is passed the stack the auxilary data and the exector object
+        # and returns its result by operating on the stack
         (
             'FLOAT',
             '[-+]?\d+\.\d*([eE][-+]?\d+|)',
@@ -311,11 +346,49 @@ cmd_parsers=[
             'p',
             None,
             lambda s,a,t: print(s[-1])
+        ),
+        (
+            'IF',
+            '\?',
+            _if_aux,
+            _if_op
         )
 ]
 
+class If:
+    def __init__(self,truth_pc_pos):
+        """
+        An if statement. The truth_pc_pos is the index in the (instruction,data)
+        pair list where the if symbol '?' was found.
 
-class Dome:
+        If a '¦' is encountered, this denotes the start of the else statement. If
+        there is no If, this should be an error. Once encountered, set the 
+        program index as the else_pc_pos in the current If statement.
+
+        If a '»' encountered, this the end of the If statement, so where the
+        program should continue after the if or else section has completed. The
+        program counter index should be stored in the endif_pc_pos.
+        """
+        self.truth_pc_pos = truth_pc_pos
+        self.else_pc_pos = None
+        self.endif_pc_pos = None
+
+class Else:
+    def __init__(self,parent_if):
+        self.parent_if = parent_if
+
+class EndIf:
+    def __init__(self,parent_if):
+        self.parent_if = parent_if
+
+class ParserState:
+    def __init__(self):
+        self.ifs=[]
+        # the program counter can be considered as the current length of the
+        # program
+        self.prog_counter=0
+
+class Parser:
     def __init__(self):
         self.mode = DOME_MODE_DISPATCH
         self.cmd_parsers=[]
@@ -328,16 +401,12 @@ class Dome:
         # converted into instructions and data
         self.state=None
         
-    def parse(self,stack,cmds):
+    def parse(self,cmds):
         """
-        Parse the commands, effecting them on the stack.
+        Parse the commands in string cmds and return a list of instructions and
+        data that can be executed by an executer.
         """
-        # TODO: Separate parsing and execution
-        # Parsing gives a "program" which is a list of functions to call and
-        # some required auxiliary data.
-        # This program is then executed, and can be executed multiple times.
-        # This allows constructs like if/else and while loops because different
-        # points of the program can be jumped to.
+        prog=[]
         while cmds:
             matched=False
             for n,p,a,f in self.cmd_parsers:
@@ -351,15 +420,28 @@ class Dome:
                         print('command: %s' % (n,))
                         print('stack: ',end='')
                         print(stack)
-                    if f:
-                        f(stack,aux,self.state)
-                    else:
-                        if (DEBUG):
-                            print("Warning, no function")
-
+                    prog.append((f,aux))
+                    self.state.prog_counter += 1
+                    if (DEBUG and not f):
+                        print("Warning, no function")
                     cmds=cmds[m.end(0):]
                     matched=True
                     break
             if not matched:
                 print("Error: no match for %s" % (cmds,))
                 break
+        return prog
+
+class Executor:
+
+    def __init__(self):
+        pass
+
+    def run(self,stack,prog):
+        """
+        Run a program prog, which is a list of (function, data) pairs. These
+        instructions affect the stack.
+        """
+        for f,a in prog:
+            if f:
+                f(stack,a,self)

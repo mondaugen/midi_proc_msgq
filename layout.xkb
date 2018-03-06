@@ -1237,7 +1237,7 @@ xkb_symbols "pc+us(mac)+inet(evdev)" {
     };
     key <TLDE> {
         type= "FOUR_LEVEL",
-        symbols[Group1]= [           grave,      asciitilde,      dead_grave,       dead_horn ]
+        symbols[Group1]= [           grave,      asciitilde,      brokenbar,       dead_horn ]
     };
     key <LFSH> {         [         Shift_L ] };
     key <BKSL> {
