@@ -435,13 +435,19 @@ class Parser:
 class Executor:
 
     def __init__(self):
-        pass
+        self.pc = 0
+
+    def jump(self,pc):
+        self.pc = pc
 
     def run(self,stack,prog):
         """
         Run a program prog, which is a list of (function, data) pairs. These
         instructions affect the stack.
         """
-        for f,a in prog:
+        self.pc = 0
+        while self.pc < len(prog):
+            f,a = prog(self.pc)
             if f:
                 f(stack,a,self)
+            self.pc += 1
